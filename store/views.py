@@ -11,8 +11,8 @@ from rest_framework import status
 from rest_framework.decorators import action,permission_classes
 from .filters import ProductFilter
 from .models import Collection, Product, Review,Cart,CartItem,Customer,Order,OrderItem
-from .serializers import CollectionSerializer, ProductSerializer, ReviewSerializer,CartSerializer,CartItemSerializer,AddCartItemSerializer,UpdateCartItemSerializer,CustomerSerializer
-
+from .serializers import CollectionSerializer, ProductSerializer, ReviewSerializer,CartSerializer,CartItemSerializer,AddCartItemSerializer,UpdateCartItemSerializer,CustomerSerializer,OrderSerializer,CreateOrderSerializer,UpdateOrderSerializer
+from rest_framework.permissions import IsAuthenticated,IsAdminUser
 
 class ProductViewSet(ModelViewSet):
     queryset = Product.objects.all()
@@ -89,7 +89,7 @@ class CustomerViewset(CreateModelMixin,UpdateModelMixin,RetrieveModelMixin,Gener
 
     @action(detail=False , methods=['GET','PUT'])
     def me(self, request):
-        (customer,created) = Customer.objects.get_or_create(user_id = request.user.id)
+        customer = Customer.objects.get(user_id = request.user.id)
         if self.request.method == 'GET':
             serializer = CustomerSerializer(customer)
             return Response(serializer.data)
@@ -98,3 +98,39 @@ class CustomerViewset(CreateModelMixin,UpdateModelMixin,RetrieveModelMixin,Gener
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return Response(serializer.data)
+
+class OrderViewset(ModelViewSet):
+
+    http_method_names = ['get','post','patch','delete','options','head']
+
+    def get_permissions(self):
+        if self.request.method in ['PATCH','DELETE']:
+            return [IsAdminUser()]
+        return[IsAuthenticated()]
+    
+    '''we overwrite the create method of mixins because the original one returns the serializer that recieves in first place.but we want to see the created order at the end,not the cart_id(serializer that we send).so we create the order by the createorder serializer but we return the order with order serializer at the end......hint: we use get_serializer_context method when we use the original create method not when we override it,so instead we give the context to the serializer object itself'''
+
+    #overwrite create method of the createmodelmixin
+    def create(self, request, *args, **kwargs):
+        serializer = CreateOrderSerializer(data=request.data,context ={'user_id':self.request.user.id} ) #used creatorderserializer to create
+        serializer.is_valid(raise_exception=True)
+        order = serializer.save()      #the returend order of the serializer
+        serializer = OrderSerializer(order)  #used orderserializer to return
+        return Response(serializer.data)
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+           return CreateOrderSerializer
+        elif self.request.method =='PATCH':
+            return UpdateOrderSerializer 
+        return OrderSerializer
+    
+    #def get_serializer_context(self):
+        #return {'user_id':self.request.user.id}
+    
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Order.objects.all()
+        customer_id = Customer.objects.only('id').get(user_id = user.id)
+        return Order.objects.filter(customer_id = customer_id)
